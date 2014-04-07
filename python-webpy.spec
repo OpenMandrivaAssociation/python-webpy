@@ -18,7 +18,7 @@ License:		Public Domain and BSD
 
 URL:			http://webpy.org/
 Source0:		http://webpy.org/static/%{srcname}-%{version}.tar.gz
-BuildRequires:	python2-devel
+BuildRequires:	pkgconfig(python2)
 BuildArch:		noarch
 Requires:		python-cherrypy
 
