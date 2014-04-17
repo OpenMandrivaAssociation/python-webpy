@@ -31,7 +31,7 @@ purpose with absolutely no restrictions.
 %setup -q -n web.py-%{version}
 chmod 0755 web/wsgiserver/ssl_builtin.py
 chmod 0755 web/wsgiserver/ssl_pyopenssl.py
-chmod 0755 web/wsgiserver/__init__.p
+chmod 0755 web/wsgiserver/__init__.py
 
 %build
 %{__python} setup.py build
