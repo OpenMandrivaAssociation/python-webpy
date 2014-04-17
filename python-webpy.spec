@@ -3,7 +3,7 @@
 
 Name:		python-%{pkgname}
 Version:	0.37
-Release:	2
+Release:	3
 Summary:	A simple web framework for Python
 Group:		Development/Python
 
@@ -20,7 +20,7 @@ URL:			http://webpy.org/
 Source0:		http://webpy.org/static/%{srcname}-%{version}.tar.gz
 BuildRequires:	pkgconfig(python2)
 BuildArch:		noarch
-Requires:		python-cherrypy
+#Requires:		python-cherrypy
 
 %description
 web.py is a web framework for python that is as simple as it is
@@ -29,10 +29,9 @@ purpose with absolutely no restrictions.
 
 %prep
 %setup -q -n web.py-%{version}
-rm web/wsgiserver/ssl_builtin.py
-rm web/wsgiserver/ssl_pyopenssl.py
-rm web/wsgiserver/__init__.py
-echo "from cherrypy.wsgiserver import *" >> web/wsgiserver/__init__.py
+chmod 0755 web/wsgiserver/ssl_builtin.py
+chmod 0755 web/wsgiserver/ssl_pyopenssl.py
+chmod 0755 web/wsgiserver/__init__.p
 
 %build
 %{__python} setup.py build
