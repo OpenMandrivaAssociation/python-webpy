@@ -1,7 +1,7 @@
 %global pkgname webpy
 %global srcname web.py
 
-Name:		python-%{pkgname}
+Name:		python2-%{pkgname}
 Version:	0.37
 Release:	5
 Summary:	A simple web framework for Python
@@ -15,10 +15,9 @@ Group:		Development/Python
 #     This is from WSGIUtils/lib/wsgiutils/wsgiServer.py
 #     See http://www.xfree86.org/3.3.6/COPYRIGHT2.html#5
 License:		Public Domain and BSD
-
 URL:			http://webpy.org/
 Source0:		http://webpy.org/static/%{srcname}-%{version}.tar.gz
-BuildRequires:	pkgconfig(python2)
+BuildRequires:		pkgconfig(python2)
 BuildArch:		noarch
 #Requires:		python-cherrypy
 
@@ -34,13 +33,12 @@ chmod 0755 web/wsgiserver/ssl_pyopenssl.py
 chmod 0755 web/wsgiserver/__init__.py
 
 %build
-%{__python} setup.py build
+%{__python2} setup.py build
 
 %install
-%{__python} setup.py install -O1 --skip-build --root %{buildroot}
-
+%{__python2} setup.py install -O1 --skip-build --root %{buildroot}
 
 %files
 %doc PKG-INFO
-%{python_sitelib}/web
-%{python_sitelib}/%{srcname}-%{version}-py?.?.egg-info
+%{python2_sitelib}/web
+%{python2_sitelib}/%{srcname}-%{version}-py?.?.egg-info
