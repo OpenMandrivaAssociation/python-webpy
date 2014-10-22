@@ -3,7 +3,7 @@
 
 Name:		python2-%{pkgname}
 Version:	0.37
-Release:	5
+Release:	6
 Summary:	A simple web framework for Python
 Group:		Development/Python
 
@@ -20,6 +20,7 @@ Source0:		http://webpy.org/static/%{srcname}-%{version}.tar.gz
 BuildRequires:		pkgconfig(python2)
 BuildArch:		noarch
 #Requires:		python-cherrypy
+%rename			python-%{pkgname}
 
 %description
 web.py is a web framework for python that is as simple as it is
