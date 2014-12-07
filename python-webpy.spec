@@ -3,7 +3,7 @@
 
 Name:		python2-%{pkgname}
 Version:	0.37
-Release:	6
+Release:	7
 Summary:	A simple web framework for Python
 Group:		Development/Python
 
