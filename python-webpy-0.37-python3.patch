@@ -1,0 +1,1579 @@
+diff --git a/web/__init__.py b/web/__init__.py
+index 4e390bc..d7492db 100644
+--- a/web/__init__.py
++++ b/web/__init__.py
+@@ -11,23 +11,23 @@ __author__ = [
+ __license__ = "public domain"
+ __contributors__ = "see http://webpy.org/changes"
+ 
+-import utils, db, net, wsgi, http, webapi, httpserver, debugerror
+-import template, form
++from . import utils, db, net, wsgi, http, webapi, httpserver, debugerror
++from . import template, form
+ 
+-import session
++from . import session
+ 
+-from utils import *
+-from db import *
+-from net import *
+-from wsgi import *
+-from http import *
+-from webapi import *
+-from httpserver import *
+-from debugerror import *
+-from application import *
+-from browser import *
++from .utils import *
++from .db import *
++from .net import *
++from .wsgi import *
++from .http import *
++from .webapi import *
++from .httpserver import *
++from .debugerror import *
++from .application import *
++#from browser import *
+ try:
+-    import webopenid as openid
++    from . import webopenid as openid
+ except ImportError:
+     pass # requires openid module
+ 
+diff --git a/web/application.py b/web/application.py
+index 79893d3..174194b 100644
+--- a/web/application.py
++++ b/web/application.py
+@@ -2,12 +2,14 @@
+ Web application
+ (from web.py)
+ """
+-import webapi as web
+-import webapi, wsgi, utils
+-import debugerror
+-import httpserver
+-
+-from utils import lstrips, safeunicode
++from __future__ import print_function
++
++from . import webapi as web
++from . import webapi, wsgi, utils
++from . import debugerror
++from . import httpserver
++from .utils import lstrips, safeunicode
++from .py3helpers import iteritems, string_types
+ import sys
+ 
+ import urllib
+@@ -15,12 +17,9 @@ import traceback
+ import itertools
+ import os
+ import types
+-from exceptions import SystemExit
++from inspect import isclass
+ 
+-try:
+-    import wsgiref.handlers
+-except ImportError:
+-    pass # don't break people with old Pythons
++import wsgiref.handlers
+ 
+ __all__ = [
+     "application", "auto_application",
+@@ -242,7 +241,7 @@ class application:
+             except (KeyboardInterrupt, SystemExit):
+                 raise
+             except:
+-                print >> web.debug, traceback.format_exc()
++                print(traceback.format_exc(), file=web.debug)
+                 raise self.internalerror()
+         
+         # processors must be applied in the resvere order. (??)
+@@ -281,7 +280,7 @@ class application:
+                     result = peep(result)
+                 else:
+                     result = [result]
+-            except web.HTTPError, e:
++            except web.HTTPError as e:
+                 result = [e.data]
+ 
+             result = web.safestr(iter(result))
+@@ -291,7 +290,7 @@ class application:
+             
+             def cleanup():
+                 self._cleanup()
+-                yield '' # force this function to be a generator
++                yield b'' # force this function to be a generator
+                             
+             return itertools.chain(result, cleanup())
+ 
+@@ -334,7 +333,49 @@ class application:
+         except ImportError:
+             # we're not running from within Google App Engine
+             return wsgiref.handlers.CGIHandler().run(wsgiapp)
+-    
++
++    def gaerun(self, *middleware):
++        """
++        Starts the program in a way that will work with Google app engine,
++        no matter which version you are using (2.5 / 2.7)
++
++        If it is 2.5, just normally start it with app.gaerun()
++
++        If it is 2.7, make sure to change the app.yaml handler to point to the
++        global variable that contains the result of app.gaerun()
++
++        For example:
++
++        in app.yaml (where code.py is where the main code is located)
++
++            handlers:
++            - url: /.*
++              script: code.app
++
++        Make sure that the app variable is globally accessible
++        """
++        wsgiapp = self.wsgifunc(*middleware)
++        try:
++            # check what version of python is running
++            version = sys.version_info[:2]
++            major   = version[0]
++            minor   = version[1]
++
++            if major != 2:
++                raise EnvironmentError("Google App Engine only supports python 2.5 and 2.7")
++
++            # if 2.7, return a function that can be run by gae
++            if minor == 7:
++                return wsgiapp
++            # if 2.5, use run_wsgi_app
++            elif minor == 5:
++                from google.appengine.ext.webapp.util import run_wsgi_app
++                return run_wsgi_app(wsgiapp)
++            else:
++                raise EnvironmentError("Not a supported platform, use python 2.5 or 2.7")
++        except ImportError:
++            return wsgiref.handlers.CGIHandler().run(wsgiapp)
++     
+     def load(self, env):
+         """Initializes ctx using env."""
+         ctx = web.ctx
+@@ -374,11 +415,11 @@ class application:
+ 
+         ctx.fullpath = ctx.path + ctx.query
+         
+-        for k, v in ctx.iteritems():
++        for k, v in iteritems(ctx):
+             # convert all string values to unicode values and replace 
+             # malformed data with a suitable replacement marker.
+-            if isinstance(v, str):
+-                ctx[k] = v.decode('utf-8', 'replace') 
++            if isinstance(v, bytes):
++                ctx[k] = v.decode('utf-8', 'replace')
+ 
+         # status must always be str
+         ctx.status = '200 OK'
+@@ -395,15 +436,13 @@ class application:
+             tocall = getattr(cls(), meth)
+             return tocall(*args)
+             
+-        def is_class(o): return isinstance(o, (types.ClassType, type))
+-            
+         if f is None:
+             raise web.notfound()
+         elif isinstance(f, application):
+             return f.handle_with_processors()
+-        elif is_class(f):
++        elif isclass(f):
+             return handle_class(f)
+-        elif isinstance(f, basestring):
++        elif isinstance(f, string_types):
+             if f.startswith('redirect '):
+                 url = f.split(' ', 1)[1]
+                 if web.ctx.method == "GET":
+@@ -431,7 +470,7 @@ class application:
+                     return f, None
+                 else:
+                     continue
+-            elif isinstance(what, basestring):
++            elif isinstance(what, string_types):
+                 what, result = utils.re_subm('^' + pat + '$', what, value)
+             else:
+                 result = utils.re_compile('^' + pat + '$').match(value)
+diff --git a/web/db.py b/web/db.py
+index 373c14c..e34952e 100644
+--- a/web/db.py
++++ b/web/db.py
+@@ -2,35 +2,28 @@
+ Database API
+ (part of web.py)
+ """
++from __future__ import print_function
+ 
+-__all__ = [
+-  "UnknownParamstyle", "UnknownDB", "TransactionError", 
+-  "sqllist", "sqlors", "reparam", "sqlquote",
+-  "SQLQuery", "SQLParam", "sqlparam",
+-  "SQLLiteral", "sqlliteral",
+-  "database", 'DB',
+-]
+-
+-import time
+-try:
+-    import datetime
+-except ImportError:
+-    datetime = None
+-
+-try: set
+-except NameError:
+-    from sets import Set as set
+-    
+-from utils import threadeddict, storage, iters, iterbetter, safestr, safeunicode
++import time, os, urllib
++import datetime
++from .utils import threadeddict, storage, iters, iterbetter, safestr, safeunicode
+ 
+ try:
+     # db module can work independent of web.py
+-    from webapi import debug, config
++    from .webapi import debug, config
+ except:
+     import sys
+     debug = sys.stderr
+     config = storage()
+ 
++__all__ = [
++  "UnknownParamstyle", "UnknownDB", "TransactionError", 
++  "sqllist", "sqlors", "reparam", "sqlquote",
++  "SQLQuery", "SQLParam", "sqlparam",
++  "SQLLiteral", "sqlliteral",
++  "database", 'DB',
++]
++
+ class UnknownDB(Exception):
+     """raised for unsupported dbms"""
+     pass
+@@ -78,7 +71,7 @@ class SQLParam(object):
+             return ':1'
+         elif paramstyle is None or paramstyle in ['format', 'pyformat']:
+             return '%s'
+-        raise UnknownParamstyle, paramstyle
++        raise UnknownParamstyle(paramstyle)
+         
+     def sqlquery(self): 
+         return SQLQuery([self])
+@@ -326,7 +319,9 @@ def sqlify(obj):
+         return "'t'"
+     elif obj is False:
+         return "'f'"
+-    elif datetime and isinstance(obj, datetime.datetime):
++    elif isinstance(obj, long):
++        return str(obj)
++    elif isinstance(obj, datetime.datetime):
+         return repr(obj.isoformat())
+     else:
+         if isinstance(obj, unicode): obj = obj.encode('utf8')
+@@ -575,7 +570,7 @@ class DB:
+             return ':1'
+         elif style in ['format', 'pyformat']:
+             return '%s'
+-        raise UnknownParamstyle, style
++        raise UnknownParamstyle(style)
+ 
+     def _db_execute(self, cur, sql_query): 
+         """executes an sql query"""
+@@ -588,7 +583,7 @@ class DB:
+             b = time.time()
+         except:
+             if self.printing:
+-                print >> debug, 'ERR:', str(sql_query)
++                print('ERR:', str(sql_query), file=debug)
+             if self.ctx.transactions:
+                 self.ctx.transactions[-1].rollback()
+             else:
+@@ -596,7 +591,7 @@ class DB:
+             raise
+ 
+         if self.printing:
+-            print >> debug, '%s (%s): %s' % (round(b-a, 2), self.ctx.dbq_count, str(sql_query))
++            print('%s (%s): %s' % (round(b-a, 2), self.ctx.dbq_count, str(sql_query)), file=debug)
+         return out
+ 
+     def _process_query(self, sql_query):
+@@ -815,10 +810,9 @@ class DB:
+         keys = values[0].keys()
+         #@@ make sure all keys are valid
+ 
+-        # make sure all rows have same keys.
+         for v in values:
+             if v.keys() != keys:
+-                raise ValueError, 'Bad data'
++                raise ValueError('Not all rows have the same keys')
+ 
+         sql_query = SQLQuery('INSERT INTO %s (%s) VALUES ' % (tablename, ', '.join(keys)))
+ 
+@@ -926,6 +920,8 @@ class PostgresDB(DB):
+         if db_module.__name__ == "psycopg2":
+             import psycopg2.extensions
+             psycopg2.extensions.register_type(psycopg2.extensions.UNICODE)
++        if db_module.__name__ == "pgdb" and 'port' in keywords:
++            keywords["host"] += ":" + str(keywords.pop('port'))
+ 
+         # if db is not provided postgres driver will take it from PGDATABASE environment variable
+         if 'db' in keywords:
+@@ -1042,10 +1038,11 @@ class FirebirdDB(DB):
+             db = None
+             pass
+         if 'pw' in keywords:
+-            keywords['passwd'] = keywords['pw']
+-            del keywords['pw']
+-        keywords['database'] = keywords['db']
+-        del keywords['db']
++            keywords['password'] = keywords.pop('pw')
++        keywords['database'] = keywords.pop('db')
++
++        self.paramstyle = db.paramstyle
++
+         DB.__init__(self, db, keywords)
+         
+     def delete(self, table, where=None, using=None, vars=None, _test=False):
+@@ -1131,6 +1128,33 @@ class OracleDB(DB):
+         else:
+             return query + "; SELECT %s.currval FROM dual" % seqname 
+ 
++def dburl2dict(url):
++    """
++    Takes a URL to a database and parses it into an equivalent dictionary.
++    
++        >>> dburl2dict('postgres://james:day@serverfarm.example.net:5432/mygreatdb')
++        {'pw': 'day', 'dbn': 'postgres', 'db': 'mygreatdb', 'host': 'serverfarm.example.net', 'user': 'james', 'port': '5432'}
++        >>> dburl2dict('postgres://james:day@serverfarm.example.net/mygreatdb')
++        {'user': 'james', 'host': 'serverfarm.example.net', 'db': 'mygreatdb', 'pw': 'day', 'dbn': 'postgres'}
++        >>> dburl2dict('postgres://james:d%40y@serverfarm.example.net/mygreatdb')
++        {'user': 'james', 'host': 'serverfarm.example.net', 'db': 'mygreatdb', 'pw': 'd@y', 'dbn': 'postgres'}
++    """
++    dbn, rest = url.split('://', 1)
++    user, rest = rest.split(':', 1)
++    pw, rest = rest.split('@', 1)
++    if ':' in rest:
++        host, rest = rest.split(':', 1)
++        port, rest = rest.split('/', 1)
++    else:
++        host, rest = rest.split('/', 1)
++        port = None
++    db = rest
++    
++    uq = urllib.unquote
++    out = dict(dbn=dbn, user=uq(user), pw=uq(pw), host=uq(host), db=uq(db))
++    if port: out['port'] = port
++    return out
++
+ _databases = {}
+ def database(dburl=None, **params):
+     """Creates appropriate database using params.
+@@ -1138,11 +1162,15 @@ def database(dburl=None, **params):
+     Pooling will be enabled if DBUtils module is available. 
+     Pooling can be disabled by passing pooling=False in params.
+     """
++    if not dburl and not params:
++        dburl = os.environ['DATABASE_URL']
++    if dburl:
++        params = dburl2dict(dburl)
+     dbn = params.pop('dbn')
+     if dbn in _databases:
+         return _databases[dbn](**params)
+     else:
+-        raise UnknownDB, dbn
++        raise UnknownDB(dbn)
+ 
+ def register_database(name, clazz):
+     """
+diff --git a/web/debugerror.py b/web/debugerror.py
+index 656d812..efd4c92 100644
+--- a/web/debugerror.py
++++ b/web/debugerror.py
+@@ -10,11 +10,12 @@ http://www.xfree86.org/3.3.6/COPYRIGHT2.html#5
+ 
+ __all__ = ["debugerror", "djangoerror", "emailerrors"]
+ 
+-import sys, urlparse, pprint, traceback
+-from template import Template
+-from net import websafe
+-from utils import sendmail, safestr
+-import webapi as web
++import sys, pprint, traceback
++from .template import Template
++from .net import websafe
++from .utils import sendmail, safestr
++from . import webapi as web
++from .py3helpers import urljoin
+ 
+ import os, os.path
+ whereami = os.path.join(os.getcwd(), __file__)
+@@ -276,11 +277,10 @@ def djangoerror():
+             }))
+         tback = tback.tb_next
+     frames.reverse()
+-    urljoin = urlparse.urljoin
+     def prettify(x):
+         try: 
+             out = pprint.pformat(x)
+-        except Exception, e: 
++        except Exception as e: 
+             out = '[could not display: <' + e.__class__.__name__ + \
+                   ': '+str(e)+'>]'
+         return out
+@@ -343,7 +343,7 @@ if __name__ == "__main__":
+     urls = (
+         '/', 'index'
+     )
+-    from application import application
++    from .application import application
+     app = application(urls, globals())
+     app.internalerror = debugerror
+     
+diff --git a/web/form.py b/web/form.py
+index 8099c38..d5743c1 100644
+--- a/web/form.py
++++ b/web/form.py
+@@ -4,8 +4,7 @@ HTML forms
+ """
+ 
+ import copy, re
+-import webapi as web
+-import utils, net
++from . import utils, net, webapi as web
+ 
+ def attrget(obj, attr, value=None):
+     try:
+@@ -97,14 +96,14 @@ class Form(object):
+     def __getitem__(self, i):
+         for x in self.inputs:
+             if x.name == i: return x
+-        raise KeyError, i
++        raise KeyError(i)
+ 
+     def __getattr__(self, name):
+         # don't interfere with deepcopy
+         inputs = self.__dict__.get('inputs') or []
+         for x in inputs:
+             if x.name == name: return x
+-        raise AttributeError, name
++        raise AttributeError(name)
+     
+     def get(self, i, default=None):
+         try:
+@@ -138,7 +137,7 @@ class Input(object):
+         return False
+         
+     def get_type(self):
+-        raise NotImplementedError
++        raise NotImplementedError()
+         
+     def get_default_id(self):
+         return self.name
+diff --git a/web/http.py b/web/http.py
+index da67eba..69a4bba 100644
+--- a/web/http.py
++++ b/web/http.py
+@@ -10,10 +10,9 @@ __all__ = [
+   "profiler",
+ ]
+ 
+-import sys, os, threading, urllib, urlparse
+-try: import datetime
+-except ImportError: pass
+-import net, utils, webapi as web
++import sys, os, threading, urllib
++import datetime
++from . import net, utils, webapi as web
+ 
+ def prefixurl(base=''):
+     """
+diff --git a/web/httpserver.py b/web/httpserver.py
+index 9c0909e..522157d 100644
+--- a/web/httpserver.py
++++ b/web/httpserver.py
+@@ -1,13 +1,20 @@
+-__all__ = ["runsimple"]
++from __future__ import print_function
+ 
+ import sys, os
+-from SimpleHTTPServer import SimpleHTTPRequestHandler
+ import urllib
+ import posixpath
+ 
+-import webapi as web
+-import net
+-import utils
++from . import webapi as web
++from . import net
++from . import utils
++from .py3helpers import PY2
++
++if PY2:
++    from SimpleHTTPServer import SimpleHTTPRequestHandler
++else:
++    from http.server import SimpleHTTPRequestHandler
++
++__all__ = ["runsimple"]
+ 
+ def runbasic(func, server_address=("0.0.0.0", 8080)):
+     """
+@@ -72,15 +79,15 @@ def runbasic(func, server_address=("0.0.0.0", 8080)):
+                     finally:
+                         if hasattr(result, 'close'): 
+                             result.close()
+-                except socket.error, socket_err:
++                except socket.error as socket_err:
+                     # Catch common network errors and suppress them
+                     if (socket_err.args[0] in \
+                        (errno.ECONNABORTED, errno.EPIPE)): 
+                         return
+-                except socket.timeout, socket_timeout: 
++                except socket.timeout as socket_timeout: 
+                     return
+             except:
+-                print >> web.debug, traceback.format_exc(),
++                print(traceback.format_exc(), file=web.debug)
+ 
+             if (not self.wsgi_sent_headers):
+                 # We must write out something!
+@@ -128,7 +135,7 @@ def runbasic(func, server_address=("0.0.0.0", 8080)):
+             self.app = func
+             self.serverShuttingDown = 0
+ 
+-    print "http://%s:%d/" % server_address
++    print("http://%s:%d/" % server_address)
+     WSGIServer(func, server_address).serve_forever()
+ 
+ # The WSGIServer instance. 
+@@ -149,9 +156,9 @@ def runsimple(func, server_address=("0.0.0.0", 8080)):
+     server = WSGIServer(server_address, func)
+ 
+     if server.ssl_adapter:
+-        print "https://%s:%d/" % server_address
++        print("https://%s:%d/" % server_address)
+     else:
+-        print "http://%s:%d/" % server_address
++        print("http://%s:%d/" % server_address)
+ 
+     try:
+         server.start()
+@@ -239,7 +246,7 @@ class StaticApp(SimpleHTTPRequestHandler):
+             if etag == client_etag:
+                 self.send_response(304, "Not Modified")
+                 self.start_response(self.status, self.headers)
+-                raise StopIteration
++                raise StopIteration()
+         except OSError:
+             pass # Probably a 404
+ 
+@@ -316,4 +323,4 @@ class LogMiddleware:
+         time = self.log_date_time_string()
+ 
+         msg = self.format % (host, time, protocol, method, req, status)
+-        print >> outfile, utils.safestr(msg)
++        print(utils.safestr(msg), file=outfile)
+diff --git a/web/net.py b/web/net.py
+index 40ff197..319d9e7 100644
+--- a/web/net.py
++++ b/web/net.py
+@@ -4,15 +4,36 @@ Network Utilities
+ """
+ 
+ __all__ = [
+-  "validipaddr", "validipport", "validip", "validaddr", 
++  "validipaddr", "validip6addr", "validipport", "validip", "validaddr",
+   "urlquote",
+   "httpdate", "parsehttpdate", 
+   "htmlquote", "htmlunquote", "websafe",
+ ]
+ 
+ import urllib, time
+-try: import datetime
+-except ImportError: pass
++import datetime
++import re
++import socket
++
++def validip6addr(address):
++    """
++    Returns True if `address` is a valid IPv6 address.
++
++        >>> validip6addr('::')
++        True
++        >>> validip6addr('aaaa:bbbb:cccc:dddd::1')
++        True
++        >>> validip6addr('1:2:3:4:5:6:7:8:9:10')
++        False
++        >>> validip6addr('12:10')
++        False
++    """
++    try:
++        socket.inet_pton(socket.AF_INET6, address)
++    except socket.error:
++        return False
++
++    return True
+ 
+ def validipaddr(address):
+     """
+@@ -55,10 +76,37 @@ def validipport(port):
+     return True
+ 
+ def validip(ip, defaultaddr="0.0.0.0", defaultport=8080):
+-    """Returns `(ip_address, port)` from string `ip_addr_port`"""
++    """
++    Returns `(ip_address, port)` from string `ip_addr_port`
++    >>> validip('1.2.3.4')
++    ('1.2.3.4', 8080)
++    >>> validip('80')
++    ('0.0.0.0', 80)
++    >>> validip('192.168.0.1:85')
++    ('192.168.0.1', 85)
++    >>> validip('::')
++    ('::', 8080)
++    >>> validip('[::]:88')
++    ('::', 88)
++    >>> validip('[::1]:80')
++    ('::1', 80)
++
++    """
+     addr = defaultaddr
+     port = defaultport
+     
++    #Matt Boswell's code to check for ipv6 first
++    match = re.search(r'^\[([^]]+)\](?::(\d+))?$',ip) #check for [ipv6]:port
++    if match:
++        if validip6addr(match.group(1)):
++            if match.group(2):
++                if validipport(match.group(2)): return (match.group(1),int(match.group(2)))
++            else:
++                return (match.group(1),port)
++    else:
++        if validip6addr(ip): return (ip,port)
++    #end ipv6 code
++
+     ip = ip.split(":", 1)
+     if len(ip) == 1:
+         if not ip[0]:
+@@ -68,14 +116,14 @@ def validip(ip, defaultaddr="0.0.0.0", defaultport=8080):
+         elif validipport(ip[0]):
+             port = int(ip[0])
+         else:
+-            raise ValueError, ':'.join(ip) + ' is not a valid IP address/port'
++            raise ValueError(':'.join(ip) + ' is not a valid IP address/port')
+     elif len(ip) == 2:
+         addr, port = ip
+         if not validipaddr(addr) and validipport(port):
+-            raise ValueError, ':'.join(ip) + ' is not a valid IP address/port'
++            raise ValueError(':'.join(ip) + ' is not a valid IP address/port')
+         port = int(port)
+     else:
+-        raise ValueError, ':'.join(ip) + ' is not a valid IP address/port'
++        raise ValueError(':'.join(ip) + ' is not a valid IP address/port')
+     return (addr, port)
+ 
+ def validaddr(string_):
+@@ -90,6 +138,8 @@ def validaddr(string_):
+         ('127.0.0.1', 8080)
+         >>> validaddr('127.0.0.1:8000')
+         ('127.0.0.1', 8000)
++        >>> validip('[::1]:80')
++        ('::1', 80)
+         >>> validaddr('fff')
+         Traceback (most recent call last):
+             ...
+diff --git a/web/py3helpers.py b/web/py3helpers.py
+new file mode 100644
+index 0000000..704cc6d
+--- /dev/null
++++ b/web/py3helpers.py
+@@ -0,0 +1,35 @@
++"""Utilities for make the code run both on Python2 and Python3.
++"""
++import sys
++
++PY2 = sys.version_info[0] == 2
++
++# urljoin
++if PY2:
++    from urlparse import urljoin
++else:
++    from urllib.parse import urljoin
++
++# Dictionary iteration
++if PY2:
++    iterkeys = lambda d: d.iterkeys()
++    itervalues = lambda d: d.itervalues()
++    iteritems = lambda d: d.iteritems()
++else:
++    iterkeys = lambda d: iter(d.keys())
++    itervalues = lambda d: iter(d.values())
++    iteritems = lambda d: iter(d.items())
++
++# string and text types
++if PY2:
++    text_type = unicode
++    string_types = (str, unicode)
++else:
++    text_type = str
++    string_types = (str,)
++
++# imap
++if PY2:
++	from itertools import imap
++else:
++	imap = map
+diff --git a/web/python23.py b/web/python23.py
+deleted file mode 100644
+index dfb331a..0000000
+--- a/web/python23.py
++++ /dev/null
+@@ -1,46 +0,0 @@
+-"""Python 2.3 compatabilty"""
+-import threading
+-
+-class threadlocal(object):
+-    """Implementation of threading.local for python2.3.
+-    """
+-    def __getattribute__(self, name):
+-        if name == "__dict__":
+-            return threadlocal._getd(self)
+-        else:
+-            try:
+-                return object.__getattribute__(self, name)
+-            except AttributeError:
+-                try:
+-                    return self.__dict__[name]
+-                except KeyError:
+-                    raise AttributeError, name
+-            
+-    def __setattr__(self, name, value):
+-        self.__dict__[name] = value
+-        
+-    def __delattr__(self, name):
+-        try:
+-            del self.__dict__[name]
+-        except KeyError:
+-            raise AttributeError, name
+-    
+-    def _getd(self):
+-        t = threading.currentThread()
+-        if not hasattr(t, '_d'):
+-            # using __dict__ of thread as thread local storage
+-            t._d = {}
+-        
+-        _id = id(self)
+-        # there could be multiple instances of threadlocal.
+-        # use id(self) as key
+-        if _id not in t._d:
+-            t._d[_id] = {}
+-        return t._d[_id]
+-        
+-if __name__ == '__main__':
+-     d = threadlocal()
+-     d.x = 1
+-     print d.__dict__
+-     print d.x
+-     
+\ No newline at end of file
+diff --git a/web/session.py b/web/session.py
+index 02d6908..a2e6ef4 100644
+--- a/web/session.py
++++ b/web/session.py
+@@ -10,15 +10,11 @@ try:
+     import cPickle as pickle
+ except ImportError:
+     import pickle
+-try:
+-    import hashlib
+-    sha1 = hashlib.sha1
+-except ImportError:
+-    import sha
+-    sha1 = sha.new
+ 
+-import utils
+-import webapi as web
++from hashlib import sha1
++
++from . import utils
++from . import webapi as web
+ 
+ __all__ = [
+     'Session', 'SessionExpired',
+@@ -187,17 +183,17 @@ class Store:
+     """Base class for session stores"""
+ 
+     def __contains__(self, key):
+-        raise NotImplementedError
++        raise NotImplementedError()
+ 
+     def __getitem__(self, key):
+-        raise NotImplementedError
++        raise NotImplementedError()
+ 
+     def __setitem__(self, key, value):
+-        raise NotImplementedError
++        raise NotImplementedError()
+ 
+     def cleanup(self, timeout):
+         """removes all the expired sessions"""
+-        raise NotImplementedError
++        raise NotImplementedError()
+ 
+     def encode(self, session_dict):
+         """encodes session dict as a string"""
+@@ -236,7 +232,7 @@ class DiskStore(Store):
+ 
+     def _get_path(self, key):
+         if os.path.sep in key: 
+-            raise ValueError, "Bad key: %s" % repr(key)
++            raise ValueError("Bad key: %s" % repr(key))
+         return os.path.join(self.root, key)
+     
+     def __contains__(self, key):
+@@ -249,7 +245,7 @@ class DiskStore(Store):
+             pickled = open(path).read()
+             return self.decode(pickled)
+         else:
+-            raise KeyError, key
++            raise KeyError(key)
+ 
+     def __setitem__(self, key, value):
+         path = self._get_path(key)
+@@ -298,7 +294,7 @@ class DBStore(Store):
+             s = self.db.select(self.table, where="session_id=$key", vars=locals())[0]
+             self.db.update(self.table, where="session_id=$key", atime=now, vars=locals())
+         except IndexError:
+-            raise KeyError
++            raise KeyError(key)
+         else:
+             return self.decode(s.data)
+ 
+diff --git a/web/template.py b/web/template.py
+index 4a37e58..22d834f 100644
+--- a/web/template.py
++++ b/web/template.py
+@@ -40,12 +40,21 @@ import os
+ import sys
+ import glob
+ import re
+-from UserDict import DictMixin
+ import warnings
+ 
+-from utils import storage, safeunicode, safestr, re_compile
+-from webapi import config
+-from net import websafe
++from .utils import storage, safeunicode, safestr, re_compile
++from .webapi import config
++from .net import websafe
++from .py3helpers import PY2
++
++if PY2:
++    from UserDict import DictMixin
++
++    # Make a new-style class
++    class MutableMapping(object, DictMixin):
++        pass
++else:
++    from collections import MutableMapping
+ 
+ def splitline(text):
+     r"""
+@@ -466,7 +475,7 @@ class Parser:
+         if keyword in self.statement_nodes:
+             return self.statement_nodes[keyword](stmt, block, begin_indent)
+         else:
+-            raise ParseError, 'Unknown statement: %s' % repr(keyword)
++            raise ParseError('Unknown statement: %s' % repr(keyword))
+         
+ class PythonTokenizer:
+     """Utility wrapper over python tokenizer."""
+@@ -721,8 +730,11 @@ TEMPLATE_BUILTIN_NAMES = [
+     "__import__", # some c-libraries like datetime requires __import__ to present in the namespace
+ ]
+ 
+-import __builtin__
+-TEMPLATE_BUILTINS = dict([(name, getattr(__builtin__, name)) for name in TEMPLATE_BUILTIN_NAMES if name in __builtin__.__dict__])
++if PY2:
++    import __builtin__ as builtins
++else:
++    import builtins
++TEMPLATE_BUILTINS = dict([(name, getattr(builtins, name)) for name in TEMPLATE_BUILTIN_NAMES if name in builtins.__dict__])
+ 
+ class ForLoop:
+     """
+@@ -745,7 +757,7 @@ class ForLoop:
+         
+     def __getattr__(self, name):
+         if self._ctx is None:
+-            raise AttributeError, name
++            raise AttributeError(name)
+         else:
+             return getattr(self._ctx, name)
+         
+@@ -910,7 +922,7 @@ class Template(BaseTemplate):
+         try:
+             # compile the code first to report the errors, if any, with the filename
+             compiled_code = compile(code, filename, 'exec')
+-        except SyntaxError, e:
++        except SyntaxError as e:
+             # display template line that caused the error along with the traceback.
+             try:
+                 e.msg += '\n\nTemplate traceback:\n    File %s, line %s\n        %s' % \
+@@ -998,7 +1010,7 @@ class Render:
+         elif kind == 'file':
+             return Template(open(path).read(), filename=path, **self._keywords)
+         else:
+-            raise AttributeError, "No template named " + name            
++            raise AttributeError("No template named " + name)
+ 
+     def _findfile(self, path_prefix): 
+         p = [f for f in glob.glob(path_prefix + '.*') if not f.endswith('~')] # skip backup files
+@@ -1161,7 +1173,7 @@ class SafeVisitor(object):
+         self.visit(ast)
+         
+         if self.errors:        
+-            raise SecurityError, '\n'.join([str(err) for err in self.errors])
++            raise SecurityError('\n'.join([str(err) for err in self.errors]))
+         
+     def visit(self, node, *args):
+         "Recursively validate node and all of its children."
+@@ -1209,7 +1221,7 @@ class SafeVisitor(object):
+         e = SecurityError("%s:%d - execution of '%s' statements is denied" % (self.filename, lineno, nodename))
+         self.errors.append(e)
+ 
+-class TemplateResult(object, DictMixin):
++class TemplateResult(MutableMapping):
+     """Dictionary like object for storing template output.
+     
+     The result of a template execution is usally a string, but sometimes it
+@@ -1277,8 +1289,8 @@ class TemplateResult(object, DictMixin):
+     def __getattr__(self, key): 
+         try:
+             return self[key]
+-        except KeyError, k:
+-            raise AttributeError, k
++        except KeyError as k:
++            raise AttributeError(k)
+ 
+     def __setattr__(self, key, value): 
+         self[key] = value
+@@ -1286,8 +1298,8 @@ class TemplateResult(object, DictMixin):
+     def __delattr__(self, key):
+         try:
+             del self[key]
+-        except KeyError, k:
+-            raise AttributeError, k
++        except KeyError as k:
++            raise AttributeError(k)
+         
+     def __unicode__(self):
+         self._prepare_body()
+diff --git a/web/utils.py b/web/utils.py
+index d5f4154..2e27988 100755
+--- a/web/utils.py
++++ b/web/utils.py
+@@ -3,6 +3,8 @@
+ General Utilities
+ (part of web.py)
+ """
++from __future__ import print_function
++
+ 
+ __all__ = [
+   "Storage", "storage", "storify", 
+@@ -32,22 +34,11 @@ __all__ = [
+ 
+ import re, sys, time, threading, itertools, traceback, os
+ 
+-try:
+-    import subprocess
+-except ImportError: 
+-    subprocess = None
+-
+-try: import datetime
+-except ImportError: pass
++import subprocess
++import datetime
++from threading import local as threadlocal
+ 
+-try: set
+-except NameError:
+-    from sets import Set as set
+-    
+-try:
+-    from threading import local as threadlocal
+-except ImportError:
+-    from python23 import threadlocal
++from .py3helpers import PY2, itervalues, iteritems, text_type, string_types, imap
+ 
+ class Storage(dict):
+     """
+@@ -72,8 +63,8 @@ class Storage(dict):
+     def __getattr__(self, key): 
+         try:
+             return self[key]
+-        except KeyError, k:
+-            raise AttributeError, k
++        except KeyError as k:
++            raise AttributeError(k)
+     
+     def __setattr__(self, key, value): 
+         self[key] = value
+@@ -81,8 +72,8 @@ class Storage(dict):
+     def __delattr__(self, key):
+         try:
+             del self[key]
+-        except KeyError, k:
+-            raise AttributeError, k
++        except KeyError as k:
++            raise AttributeError(k)
+     
+     def __repr__(self):     
+         return '<Storage ' + dict.__repr__(self) + '>'
+@@ -163,7 +154,7 @@ def storify(mapping, *requireds, **defaults):
+             value = [value]
+         setattr(stor, key, value)
+ 
+-    for (key, value) in defaults.iteritems():
++    for (key, value) in iteritems(defaults):
+         result = value
+         if hasattr(stor, key): 
+             result = stor[key]
+@@ -194,13 +185,13 @@ class Counter(storage):
+     
+     def most(self):
+         """Returns the keys with maximum count."""
+-        m = max(self.itervalues())
+-        return [k for k, v in self.iteritems() if v == m]
++        m = max(itervalues(self))
++        return [k for k, v in iteritems(self) if v == m]
+         
+     def least(self):
+         """Returns the keys with mininum count."""
+         m = min(self.itervalues())
+-        return [k for k, v in self.iteritems() if v == m]
++        return [k for k, v in iteritems(self) if v == m]
+ 
+     def percent(self, key):
+        """Returns what percentage a certain key is of all entries.
+@@ -258,19 +249,7 @@ class Counter(storage):
+        
+ counter = Counter
+ 
+-iters = [list, tuple]
+-import __builtin__
+-if hasattr(__builtin__, 'set'):
+-    iters.append(set)
+-if hasattr(__builtin__, 'frozenset'):
+-    iters.append(set)
+-if sys.version_info < (2,6): # sets module deprecated in 2.6
+-    try:
+-        from sets import Set
+-        iters.append(Set)
+-    except ImportError: 
+-        pass
+-    
++iters = [list, tuple, set, frozenset]
+ class _hack(tuple): pass
+ iters = _hack(iters)
+ iters.__doc__ = """
+@@ -291,7 +270,7 @@ def _strips(direction, text, remove):
+         if text.endswith(remove):   
+             return text[:-len(remove)]
+     else: 
+-        raise ValueError, "Direction needs to be r or l."
++        raise ValueError("Direction needs to be r or l.")
+     return text
+ 
+ def rstrips(text, remove):
+@@ -342,17 +321,26 @@ def safeunicode(obj, encoding='utf-8'):
+         u'\u1234'
+     """
+     t = type(obj)
+-    if t is unicode:
++    if t is text_type:
+         return obj
+-    elif t is str:
++    elif t is bytes:
+         return obj.decode(encoding)
+     elif t in [int, float, bool]:
+         return unicode(obj)
+-    elif hasattr(obj, '__unicode__') or isinstance(obj, unicode):
+-        return unicode(obj)
++    #elif hasattr(obj, '__unicode__') or isinstance(obj, unicode):
++    #    return unicode(obj)
++    #else:
++    #    return str(obj).decode(encoding)
+     else:
+-        return str(obj).decode(encoding)
+-    
++        return unicode(obj)
++
++if PY2:
++    def is_iter(obj):
++        return hasattr(obj, 'next')
++else:
++    def is_iter(obj):
++        return hasattr(obj, '__next__')
++
+ def safestr(obj, encoding='utf-8'):
+     r"""
+     Converts any given object to utf-8 encoded string. 
+@@ -364,12 +352,12 @@ def safestr(obj, encoding='utf-8'):
+         >>> safestr(2)
+         '2'
+     """
+-    if isinstance(obj, unicode):
++    if isinstance(obj, text_type):
+         return obj.encode(encoding)
+-    elif isinstance(obj, str):
++    elif isinstance(obj, bytes):
+         return obj
+-    elif hasattr(obj, 'next'): # iterator
+-        return itertools.imap(safestr, obj)
++    elif is_iter(obj):
++        return imap(safestr, obj)
+     else:
+         return str(obj)
+ 
+@@ -419,9 +407,9 @@ def timelimit(timeout):
+             c = Dispatch()
+             c.join(timeout)
+             if c.isAlive():
+-                raise TimeoutError, 'took too long'
++                raise TimeoutError('took too long')
+             if c.error:
+-                raise c.error[0], c.error[1]
++                raise c.error[1]
+             return c.result
+         return _2
+     return _1
+@@ -543,8 +531,8 @@ def group(seq, size):
+         [[1, 2], [3, 4], [5]]
+     """
+     def take(seq, n):
+-        for i in xrange(n):
+-            yield seq.next()
++        for i in range(n):
++            yield next(seq)
+ 
+     if not hasattr(seq, 'next'):  
+         seq = iter(seq)
+@@ -672,7 +660,7 @@ class IterBetter:
+     def __getitem__(self, i):
+         #todo: slices
+         if i < self.c: 
+-            raise IndexError, "already passed "+str(i)
++            raise IndexError("already passed "+str(i))
+         try:
+             while i > self.c: 
+                 self.i.next()
+@@ -681,7 +669,7 @@ class IterBetter:
+             self.c += 1
+             return self.i.next()
+         except StopIteration: 
+-            raise IndexError, str(i)
++            raise IndexError(str(i))
+             
+     def __nonzero__(self):
+         if hasattr(self, "__len__"):
+@@ -730,7 +718,7 @@ def dictreverse(mapping):
+         >>> dictreverse({1: 2, 3: 4})
+         {2: 1, 4: 3}
+     """
+-    return dict([(value, key) for (key, value) in mapping.iteritems()])
++    return dict([(value, key) for (key, value) in iteritems(mapping)])
+ 
+ def dictfind(dictionary, element):
+     """
+@@ -742,7 +730,7 @@ def dictfind(dictionary, element):
+         3
+         >>> dictfind(d, 5)
+     """
+-    for (key, value) in dictionary.iteritems():
++    for (key, value) in iteritems(dictionary):
+         if element is value: 
+             return key
+ 
+@@ -758,7 +746,7 @@ def dictfindall(dictionary, element):
+         []
+     """
+     res = []
+-    for (key, value) in dictionary.iteritems():
++    for (key, value) in iteritems(dictionary):
+         if element is value:
+             res.append(key)
+     return res
+@@ -1056,7 +1044,7 @@ class CaptureStdout:
+     Captures everything `func` prints to stdout and returns it instead.
+     
+         >>> def idiot():
+-        ...     print "foo"
++        ...     print("foo")
+         >>> capturestdout(idiot)()
+         'foo\\n'
+     
+@@ -1159,25 +1147,25 @@ def tryall(context, prefix=None):
+     """
+     context = context.copy() # vars() would update
+     results = {}
+-    for (key, value) in context.iteritems():
++    for (key, value) in iteritems(context):
+         if not hasattr(value, '__call__'): 
+             continue
+         if prefix and not key.startswith(prefix): 
+             continue
+-        print key + ':',
++        print(key + ':', end=" ")
+         try:
+             r = value()
+             dictincr(results, r)
+-            print r
++            print(r)
+         except:
+-            print 'ERROR'
++            print('ERROR')
+             dictincr(results, 'ERROR')
+-            print '   ' + '\n   '.join(traceback.format_exc().split('\n'))
++            print('   ' + '\n   '.join(traceback.format_exc().split('\n')))
+         
+-    print '-'*40
+-    print 'results:'
++    print('-'*40)
++    print('results:')
+     for (key, value) in results.iteritems():
+-        print ' '*2, str(key)+':', value
++        print(' '*2, str(key)+':', value)
+         
+ class ThreadedDict(threadlocal):
+     """
+@@ -1292,7 +1280,7 @@ def autoassign(self, locals):
+ 
+         def __init__(self, foo, bar, baz=1): autoassign(self, locals())
+     """
+-    for (key, value) in locals.iteritems():
++    for (key, value) in iteritems(locals):
+         if key == 'self': 
+             continue
+         setattr(self, key, value)
+@@ -1315,7 +1303,7 @@ def to36(q):
+         ValueError: must supply a positive integer
+     
+     """
+-    if q < 0: raise ValueError, "must supply a positive integer"
++    if q < 0: raise ValueError("must supply a positive integer")
+     letters = "0123456789abcdefghijklmnopqrstuvwxyz"
+     converted = []
+     while q != 0:
+@@ -1375,7 +1363,7 @@ def sendmail(from_address, to_address, subject, message, headers=None, **kw):
+             filename = os.path.basename(a)
+             mail.attach(filename, content, None)
+         else:
+-            raise ValueError, "Invalid attachment: %s" % repr(a)
++            raise ValueError("Invalid attachment: %s" % repr(a))
+             
+     mail.send()
+ 
+@@ -1447,7 +1435,7 @@ class _EmailMessage:
+         self.message.attach(msg)
+ 
+     def prepare_message(self):
+-        for k, v in self.headers.iteritems():
++        for k, v in iteritems(self.headers):
+             if k.lower() == "content-type":
+                 self.message.set_type(v)
+             else:
+@@ -1493,7 +1481,7 @@ class _EmailMessage:
+             c = boto.ses.SESConnection(
+               aws_access_key_id=webapi.config.get('aws_access_key_id'),
+               aws_secret_access_key=web.api.config.get('aws_secret_access_key'))
+-            c.send_raw_email(self.from_address, message_text, self.from_recipients)
++            c.send_raw_email(self.from_address, message_text, self.recipients)
+         else:
+             sendmail = webapi.config.get('sendmail_path', '/usr/sbin/sendmail')
+         
+@@ -1503,17 +1491,10 @@ class _EmailMessage:
+                 
+             cmd = [sendmail, '-f', self.from_address] + self.recipients
+ 
+-            if subprocess:
+-                p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+-                p.stdin.write(message_text)
+-                p.stdin.close()
+-                p.wait()
+-            else:
+-                i, o = os.popen2(cmd)
+-                i.write(message)
+-                i.close()
+-                o.close()
+-                del i, o
++            p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
++            p.stdin.write(message_text)
++            p.stdin.close()
++            p.wait()
+                 
+     def __repr__(self):
+         return "<EmailMessage>"
+diff --git a/web/webapi.py b/web/webapi.py
+index 7a233cc..db1101d 100644
+--- a/web/webapi.py
++++ b/web/webapi.py
+@@ -2,6 +2,7 @@
+ Web API (wrapper around WSGI)
+ (from web.py)
+ """
++from __future__ import print_function
+ 
+ __all__ = [
+     "config",
+@@ -11,9 +12,9 @@ __all__ = [
+     "ctx", 
+     "HTTPError", 
+ 
+-    # 200, 201, 202
+-    "OK", "Created", "Accepted",    
+-    "ok", "created", "accepted",
++    # 200, 201, 202, 204
++    "OK", "Created", "Accepted", "NoContent",    
++    "ok", "created", "accepted", "nocontent",
+     
+     # 301, 302, 303, 304, 307
+     "Redirect", "Found", "SeeOther", "NotModified", "TempRedirect", 
+@@ -28,8 +29,15 @@ __all__ = [
+     "internalerror",
+ ]
+ 
+-import sys, cgi, Cookie, pprint, urlparse, urllib
+-from utils import storage, storify, threadeddict, dictadd, intget, safestr
++import sys, cgi, pprint, urllib
++from .utils import storage, storify, threadeddict, dictadd, intget, safestr
++
++from .py3helpers import PY2, urljoin
++
++if PY2:
++    from Cookie import Morsel
++else:
++    from http.cookies import Morsel
+ 
+ config = storage()
+ config.__doc__ = """
+@@ -65,6 +73,7 @@ def _status_code(status, data=None, classname=None, docstring=None):
+ ok = OK = _status_code("200 OK", data="")
+ created = Created = _status_code("201 Created")
+ accepted = Accepted = _status_code("202 Accepted")
++nocontent = NoContent = _status_code("204 No Content")
+ 
+ class Redirect(HTTPError):
+     """A `301 Moved Permanently` redirect."""
+@@ -74,7 +83,7 @@ class Redirect(HTTPError):
+         `url` is joined with the base URL so that things like 
+         `redirect("about") will work properly.
+         """
+-        newloc = urlparse.urljoin(ctx.path, url)
++        newloc = urljoin(ctx.path, url)
+ 
+         if newloc.startswith('/'):
+             if absolute:
+@@ -132,20 +141,20 @@ badrequest = BadRequest
+ class Unauthorized(HTTPError):
+     """`401 Unauthorized` error."""
+     message = "unauthorized"
+-    def __init__(self):
++    def __init__(self, message=None):
+         status = "401 Unauthorized"
+         headers = {'Content-Type': 'text/html'}
+-        HTTPError.__init__(self, status, headers, self.message)
++        HTTPError.__init__(self, status, headers, message or self.message)
+ 
+ unauthorized = Unauthorized
+ 
+ class Forbidden(HTTPError):
+     """`403 Forbidden` error."""
+     message = "forbidden"
+-    def __init__(self):
++    def __init__(self, message=None):
+         status = "403 Forbidden"
+         headers = {'Content-Type': 'text/html'}
+-        HTTPError.__init__(self, status, headers, self.message)
++        HTTPError.__init__(self, status, headers, message or self.message)
+ 
+ forbidden = Forbidden
+ 
+@@ -189,50 +198,50 @@ nomethod = NoMethod
+ class NotAcceptable(HTTPError):
+     """`406 Not Acceptable` error."""
+     message = "not acceptable"
+-    def __init__(self):
++    def __init__(self, message=None):
+         status = "406 Not Acceptable"
+         headers = {'Content-Type': 'text/html'}
+-        HTTPError.__init__(self, status, headers, self.message)
++        HTTPError.__init__(self, status, headers, message or self.message)
+ 
+ notacceptable = NotAcceptable
+ 
+ class Conflict(HTTPError):
+     """`409 Conflict` error."""
+     message = "conflict"
+-    def __init__(self):
++    def __init__(self, message=None):
+         status = "409 Conflict"
+         headers = {'Content-Type': 'text/html'}
+-        HTTPError.__init__(self, status, headers, self.message)
++        HTTPError.__init__(self, status, headers, message or self.message)
+ 
+ conflict = Conflict
+ 
+ class Gone(HTTPError):
+     """`410 Gone` error."""
+     message = "gone"
+-    def __init__(self):
++    def __init__(self, message=None):
+         status = '410 Gone'
+         headers = {'Content-Type': 'text/html'}
+-        HTTPError.__init__(self, status, headers, self.message)
++        HTTPError.__init__(self, status, headers, message or self.message)
+ 
+ gone = Gone
+ 
+ class PreconditionFailed(HTTPError):
+     """`412 Precondition Failed` error."""
+     message = "precondition failed"
+-    def __init__(self):
++    def __init__(self, message=None):
+         status = "412 Precondition Failed"
+         headers = {'Content-Type': 'text/html'}
+-        HTTPError.__init__(self, status, headers, self.message)
++        HTTPError.__init__(self, status, headers, message or self.message)
+ 
+ preconditionfailed = PreconditionFailed
+ 
+ class UnsupportedMediaType(HTTPError):
+     """`415 Unsupported Media Type` error."""
+     message = "unsupported media type"
+-    def __init__(self):
++    def __init__(self, message=None):
+         status = "415 Unsupported Media Type"
+         headers = {'Content-Type': 'text/html'}
+-        HTTPError.__init__(self, status, headers, self.message)
++        HTTPError.__init__(self, status, headers, message or self.message)
+ 
+ unsupportedmediatype = UnsupportedMediaType
+ 
+@@ -267,7 +276,7 @@ def header(hdr, value, unique=False):
+     hdr, value = safestr(hdr), safestr(value)
+     # protection against HTTP response splitting attack
+     if '\n' in hdr or '\r' in hdr or '\n' in value or '\r' in value:
+-        raise ValueError, 'invalid characters in header'
++        raise ValueError('invalid characters in header')
+         
+     if unique is True:
+         for h, v in ctx.headers:
+@@ -344,7 +353,7 @@ def data():
+ def setcookie(name, value, expires='', domain=None,
+               secure=False, httponly=False, path=None):
+     """Sets a cookie."""
+-    morsel = Cookie.Morsel()
++    morsel = Morsel()
+     name, value = safestr(name), safestr(value)
+     morsel.set(name, value, urllib.quote(value))
+     if expires < 0:
+@@ -422,7 +431,7 @@ def parse_cookies(http_cookie):
+                     cookie.load(attr_value)
+                 except Cookie.CookieError:
+                     pass
+-        cookies = dict((k, urllib.unquote(v.value)) for k, v in cookie.iteritems())
++        cookies = dict([(k, urllib.unquote(v.value)) for k, v in cookie.iteritems()])
+     else:
+         # HTTP_COOKIE doesn't have quotes, use fast cookie parsing
+         cookies = {}
+@@ -456,7 +465,7 @@ def cookies(*requireds, **defaults):
+         return storify(ctx._parsed_cookies, *requireds, **defaults)
+     except KeyError:
+         badrequest()
+-        raise StopIteration
++        raise StopIteration()
+ 
+ def debug(*args):
+     """
+@@ -467,7 +476,7 @@ def debug(*args):
+     except: 
+         out = sys.stderr
+     for arg in args:
+-        print >> out, pprint.pformat(arg)
++        print(pprint.pformat(arg), file=out)
+     return ''
+ 
+ def _debugwrite(x):
+@@ -522,4 +531,4 @@ A `storage` object containing various information about the request:
+ 
+ if __name__ == "__main__":
+     import doctest
+-    doctest.testmod()
+\ No newline at end of file
++    doctest.testmod()
+diff --git a/web/wsgi.py b/web/wsgi.py
+index fe53ab2..03ba4f9 100644
+--- a/web/wsgi.py
++++ b/web/wsgi.py
+@@ -5,11 +5,11 @@ WSGI Utilities
+ 
+ import os, sys
+ 
+-import http
+-import webapi as web
+-from utils import listget
+-from net import validaddr, validip
+-import httpserver
++from . import http
++from . import webapi as web
++from .utils import listget, intget
++from .net import validaddr, validip
++from . import httpserver
+     
+ def runfcgi(func, addr=('localhost', 8000)):
+     """Runs a WSGI function as a FastCGI server."""
+@@ -27,11 +27,11 @@ def runwsgi(func):
+     as appropriate based on context and `sys.argv`.
+     """
+     
+-    if os.environ.has_key('SERVER_SOFTWARE'): # cgi
++    if 'SERVER_SOFTWARE' in os.environ: # cgi
+         os.environ['FCGI_FORCE_CGI'] = 'Y'
+ 
+-    if (os.environ.has_key('PHP_FCGI_CHILDREN') #lighttpd fastcgi
+-      or os.environ.has_key('SERVER_SOFTWARE')):
++    if ('PHP_FCGI_CHILDREN' in os.environ #lighttpd fastcgi
++      or 'SERVER_SOFTWARE') in os.environ:
+         return runfcgi(func, None)
+     
+     if 'fcgi' in sys.argv or 'fastcgi' in sys.argv:
+@@ -51,7 +51,12 @@ def runwsgi(func):
+         else:
+             return runscgi(func)
+     
+-    return httpserver.runsimple(func, validip(listget(sys.argv, 1, '')))
++    
++    server_addr = validip(listget(sys.argv, 1, ''))
++    if 'PORT' in os.environ: # e.g. Heroku
++        server_addr = ('0.0.0.0', intget(os.environ['PORT']))
++    
++    return httpserver.runsimple(func, server_addr)
+     
+ def _is_dev_mode():
+     # Some embedded python interpreters won't have sys.arv
+@@ -59,8 +64,8 @@ def _is_dev_mode():
+     argv = getattr(sys, "argv", [])
+ 
+     # quick hack to check if the program is running in dev mode.
+-    if os.environ.has_key('SERVER_SOFTWARE') \
+-        or os.environ.has_key('PHP_FCGI_CHILDREN') \
++    if 'SERVER_SOFTWARE' in os.environ \
++        or 'PHP_FCGI_CHILDREN' in os.environ \
+         or 'fcgi' in argv or 'fastcgi' in argv \
+         or 'mod_wsgi' in argv:
+             return False
