@@ -4,7 +4,7 @@
 
 Name:		python-%{pkgname}
 Version:	0.37
-Release:	9
+Release:	10
 Summary:	A simple web framework for Python
 Group:		Development/Python
 
